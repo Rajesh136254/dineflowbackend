@@ -48,9 +48,6 @@ app.use(cors({
   optionsSuccessStatus: 204
 }));
 
-// Add explicit handling for preflight requests
-app.options('*', cors());
-
 // Add explicit CORS headers for all requests
 app.use((req, res, next) => {
   const origin = req.headers.origin;
