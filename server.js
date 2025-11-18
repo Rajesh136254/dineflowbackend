@@ -1329,18 +1329,33 @@ const initializeDatabase = async () => {
 
 // MySQL connection pool with environment variables
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'Rajesh',
-  password: process.env.DB_PASSWORD || 'Rajesh@254',
-  database: process.env.DB_NAME || 'restaurant_db',
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true
+  debug: true
+  // Remove the deprecated options
 });
 
+
+pool.getConnection()
+  .then(conn => {
+    console.log('Database connected successfully');
+    conn.release();
+  })
+  .catch(err => {
+    console.error('Database connection failed:', err);
+    console.log('Connection details:', {
+      host: process.env.DB_HOST,
+      user: process.env.DB_USER,
+      database: process.env.DB_NAME,
+      port: process.env.DB_PORT
+    });
+  });
 // Start the server
 const PORT = process.env.PORT || 5000;
 
