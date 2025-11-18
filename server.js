@@ -10,24 +10,69 @@ require('dotenv').config();
 
 const app = express();
 const httpServer = createServer(app);
+
+// Define allowed origins for CORS
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'https://dineflowfrontend.vercel.app',
+  'https://dineflowbackend.onrender.com'
+];
+
+// Socket.IO CORS configuration
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"]
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
   }
 });
 
 // Enhanced CORS configuration
 app.use(cors({
-    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
+// Add explicit handling for preflight requests
+app.options('*', cors());
+
+// Add explicit CORS headers for all requests
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 // Add JSON parsing middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Add request logging middleware
 app.use((req, res, next) => {
@@ -53,6 +98,7 @@ app.use((err, req, res, next) => {
     });
 });
 
+// Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('Kitchen dashboard connected:', socket.id);
   
@@ -60,6 +106,43 @@ io.on('connection', (socket) => {
     console.log('Kitchen dashboard disconnected:', socket.id);
   });
 });
+
+// MySQL connection pool with proper configuration
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  acquireTimeout: 60000,
+  timeout: 60000,
+  reconnect: true,
+  ssl: {
+    rejectUnauthorized: true
+  }
+});
+
+// Test database connection
+const testDatabaseConnection = async () => {
+  try {
+    const connection = await pool.getConnection();
+    console.log('Database connected successfully');
+    connection.release();
+    return true;
+  } catch (error) {
+    console.error('Database connection failed:', error);
+    console.log('Connection details:', {
+      host: process.env.DB_HOST,
+      user: process.env.DB_USER,
+      database: process.env.DB_NAME,
+      port: process.env.DB_PORT
+    });
+    return false;
+  }
+};
 
 // Enhanced health check endpoint
 app.get('/api/health', async (req, res) => {
@@ -69,14 +152,16 @@ app.get('/api/health', async (req, res) => {
     res.json({ 
       status: 'ok', 
       message: 'Restaurant QR Ordering System API',
-      database: 'connected'
+      database: 'connected',
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('Database health check failed:', error);
     res.status(500).json({ 
       status: 'error', 
       message: 'Database connection failed',
-      error: error.message 
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -90,12 +175,9 @@ app.get('/api/menu', async (req, res) => {
     );
     console.log(`Found ${rows.length} menu items`);
     
-    // Ensure we're sending JSON
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: rows });
   } catch (error) {
     console.error('Error fetching menu:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch menu',
@@ -113,11 +195,9 @@ app.get('/api/menu/:id', async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Menu item not found' });
     }
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: rows[0] });
   } catch (error) {
     console.error('Error fetching menu item:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch menu item',
@@ -135,11 +215,9 @@ app.post('/api/menu', async (req, res) => {
     );
     
     const [newItem] = await pool.execute('SELECT * FROM menu_items WHERE id = ?', [result.insertId]);
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: newItem[0] });
   } catch (error) {
     console.error('Error creating menu item:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to create menu item',
@@ -161,11 +239,9 @@ app.put('/api/menu/:id', async (req, res) => {
     }
     
     const [updatedItem] = await pool.execute('SELECT * FROM menu_items WHERE id = ?', [req.params.id]);
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: updatedItem[0] });
   } catch (error) {
     console.error('Error updating menu item:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to update menu item',
@@ -199,11 +275,9 @@ app.delete('/api/menu/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Menu item not found' });
     }
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, message: 'Menu item deleted successfully' });
   } catch (error) {
     console.error('Error deleting menu item:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to delete menu item',
@@ -221,11 +295,9 @@ app.get('/api/tables', async (req, res) => {
     );
     console.log(`Found ${rows.length} tables`);
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: rows });
   } catch (error) {
     console.error('Error fetching tables:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch tables',
@@ -243,11 +315,9 @@ app.get('/api/tables/:tableNumber', async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Table not found' });
     }
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: rows[0] });
   } catch (error) {
     console.error('Error fetching table:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch table',
@@ -266,11 +336,9 @@ app.post('/api/tables', async (req, res) => {
     );
     
     const [newTable] = await pool.execute('SELECT * FROM restaurant_tables WHERE id = ?', [result.insertId]);
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: newTable[0] });
   } catch (error) {
     console.error('Error creating table:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to create table',
@@ -293,11 +361,9 @@ app.put('/api/tables/:id', async (req, res) => {
     }
     
     const [updatedTable] = await pool.execute('SELECT * FROM restaurant_tables WHERE id = ?', [req.params.id]);
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: updatedTable[0] });
   } catch (error) {
     console.error('Error updating table:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to update table',
@@ -315,11 +381,9 @@ app.delete('/api/tables/:id', async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: 'Table not found' });
     }
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, message: 'Table deleted successfully' });
   } catch (error) {
     console.error('Error deleting table:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to delete table',
@@ -340,11 +404,9 @@ app.get('/api/categories', async (req, res) => {
     const categories = rows.map(row => row.category);
     console.log(`Found ${categories.length} categories`);
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: categories });
   } catch (error) {
     console.error('Error fetching categories:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch categories',
@@ -379,7 +441,6 @@ app.post('/api/categories', async (req, res) => {
       ['[Category Placeholder]', `Placeholder for ${trimmedName} category`, 0, 0, trimmedName, false]
     );
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ 
       success: true, 
       message: 'Category created successfully',
@@ -387,7 +448,6 @@ app.post('/api/categories', async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating category:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to create category',
@@ -419,14 +479,12 @@ app.delete('/api/categories/:name', async (req, res) => {
       [categoryName]
     );
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ 
       success: true, 
       message: 'Category deleted successfully' 
     });
   } catch (error) {
     console.error('Error deleting category:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to delete category',
@@ -478,11 +536,9 @@ app.get('/api/orders', async (req, res) => {
     query += ' ORDER BY o.created_at DESC';
     
     const [rows] = await pool.execute(query, params);
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: rows });
   } catch (error) {
     console.error('Error fetching orders:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch orders',
@@ -547,12 +603,10 @@ app.post('/api/orders', async (req, res) => {
     
     io.emit('new-order', orderData);
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: orderData });
   } catch (error) {
     await connection.rollback();
     console.error('Error creating order:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to create order',
@@ -578,11 +632,9 @@ app.put('/api/orders/:id/status', async (req, res) => {
     const [updatedOrder] = await pool.execute('SELECT * FROM orders WHERE id = ?', [req.params.id]);
     io.emit('order-status-updated', updatedOrder[0]);
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ success: true, data: updatedOrder[0] });
   } catch (error) {
     console.error('Error updating order status:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to update order status',
@@ -620,7 +672,6 @@ app.get('/api/analytics/daily', async (req, res) => {
       ORDER BY quantity_sold DESC
     `, [targetDate]);
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: {
@@ -631,7 +682,6 @@ app.get('/api/analytics/daily', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching daily analytics:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch analytics',
@@ -681,7 +731,6 @@ app.get('/api/analytics/monthly', async (req, res) => {
       ORDER BY date
     `, [targetMonth, targetYear]);
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: {
@@ -694,7 +743,6 @@ app.get('/api/analytics/monthly', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching monthly analytics:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch analytics',
@@ -737,7 +785,6 @@ app.get('/api/analytics/quarterly', async (req, res) => {
       ORDER BY quantity_sold DESC
     `, [startMonth, endMonth, targetYear]);
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: {
@@ -749,7 +796,6 @@ app.get('/api/analytics/quarterly', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching quarterly analytics:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch analytics',
@@ -798,7 +844,6 @@ app.get('/api/analytics/yearly', async (req, res) => {
       ORDER BY month
     `, [targetYear]);
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: {
@@ -810,7 +855,6 @@ app.get('/api/analytics/yearly', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching yearly analytics:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch analytics',
@@ -821,7 +865,6 @@ app.get('/api/analytics/yearly', async (req, res) => {
 
 // Analytics page endpoints
 app.get('/api/analytics/test', (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
   res.json({ success: true, message: 'Analytics API is working' });
 });
 
@@ -861,7 +904,6 @@ const getDateRange = (period) => {
 };
 
 // Get summary analytics
-// Replace the summary endpoint in server.js with this:
 app.get('/api/analytics/summary', async (req, res) => {
   try {
     const { period = 'daily', currency = 'INR' } = req.query;
@@ -904,7 +946,6 @@ app.get('/api/analytics/summary', async (req, res) => {
     // Average order value
     const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: {
@@ -916,7 +957,6 @@ app.get('/api/analytics/summary', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching summary analytics:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch summary analytics',
@@ -926,7 +966,6 @@ app.get('/api/analytics/summary', async (req, res) => {
 });
 
 // Get revenue and orders over time
-// Replace the revenue-orders endpoint in server.js with this:
 app.get('/api/analytics/revenue-orders', async (req, res) => {
   try {
     const { start = '2025-01-01', end = '2025-12-31' } = req.query;
@@ -947,7 +986,7 @@ app.get('/api/analytics/revenue-orders', async (req, res) => {
     );
 
     const result = rows.map(r => ({
-      date: r.date,                 // string "YYYY-MM-DD"
+      date: r.date,
       revenue: Number(r.revenue),
       orders: Number(r.orders)
     }));
@@ -959,10 +998,7 @@ app.get('/api/analytics/revenue-orders', async (req, res) => {
   }
 });
 
-// ──────────────────────────────────────────────────────────────
-//  GET /api/analytics/top-items
-//  (replace the existing top-items endpoint with this one)
-// ──────────────────────────────────────────────────────────────
+// Get top items
 app.get('/api/analytics/top-items', async (req, res) => {
   try {
     const { start = '2025-01-01', end = '2025-12-31' } = req.query;
@@ -994,7 +1030,6 @@ app.get('/api/analytics/top-items', async (req, res) => {
 });
 
 // Get category performance
-// Replace the category-performance endpoint in server.js with this:
 app.get('/api/analytics/category-performance', async (req, res) => {
   try {
     const { period = 'daily', currency = 'INR' } = req.query;
@@ -1034,14 +1069,12 @@ app.get('/api/analytics/category-performance', async (req, res) => {
 
     const [results] = await pool.execute(query, [startDate, endDate]);
 
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: results
     });
   } catch (error) {
     console.error('Error fetching category performance:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch category performance',
@@ -1071,14 +1104,12 @@ app.get('/api/analytics/payment-methods', async (req, res) => {
       paymentMethods[item.payment_method] = item.count;
     });
 
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: paymentMethods
     });
   } catch (error) {
     console.error('Error fetching payment methods:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch payment methods',
@@ -1088,7 +1119,6 @@ app.get('/api/analytics/payment-methods', async (req, res) => {
 });
 
 // Get table performance
-// Replace the table-performance endpoint in server.js with this:
 app.get('/api/analytics/table-performance', async (req, res) => {
   try {
     const { period = 'daily', currency = 'INR' } = req.query;
@@ -1126,14 +1156,12 @@ app.get('/api/analytics/table-performance', async (req, res) => {
 
     const [results] = await pool.execute(query, [startDate, endDate]);
 
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: results
     });
   } catch (error) {
     console.error('Error fetching table performance:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch table performance',
@@ -1173,14 +1201,12 @@ app.get('/api/analytics/hourly-orders', async (req, res) => {
       });
     }
 
-    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       data: hourlyData
     });
   } catch (error) {
     console.error('Error fetching hourly orders:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch hourly orders',
@@ -1220,7 +1246,6 @@ app.post('/api/auth/register', async (req, res) => {
       [result.insertId]
     );
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ 
       success: true, 
       message: 'User registered successfully',
@@ -1228,7 +1253,6 @@ app.post('/api/auth/register', async (req, res) => {
     });
   } catch (error) {
     console.error('Error registering user:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to register user',
@@ -1263,7 +1287,6 @@ app.post('/api/auth/login', async (req, res) => {
     // Remove password hash from response
     const { password_hash, ...userWithoutPassword } = user;
     
-    res.setHeader('Content-Type', 'application/json');
     res.json({ 
       success: true, 
       message: 'Login successful',
@@ -1271,7 +1294,6 @@ app.post('/api/auth/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Error logging in:', error);
-    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false, 
       message: 'Failed to login',
@@ -1310,71 +1332,55 @@ const initializeDatabase = async () => {
     const [tables] = await pool.execute('SHOW TABLES');
     console.log('Existing tables:', tables);
     
-    // Read and execute the SQL file
-    const sqlFile = fs.readFileSync(path.join(__dirname, 'database.sql'), 'utf8');
-    const statements = sqlFile.split(';').filter(statement => statement.trim());
-    
-    for (const statement of statements) {
-      if (statement.trim()) {
-        await pool.execute(statement);
+    // Read and execute the SQL file if it exists
+    const sqlFilePath = path.join(__dirname, 'database.sql');
+    if (fs.existsSync(sqlFilePath)) {
+      const sqlFile = fs.readFileSync(sqlFilePath, 'utf8');
+      const statements = sqlFile.split(';').filter(statement => statement.trim());
+      
+      for (const statement of statements) {
+        if (statement.trim()) {
+          await pool.execute(statement);
+        }
       }
+      
+      console.log('Database initialized successfully');
+    } else {
+      console.log('Database initialization file not found, skipping...');
     }
-    
-    console.log('Database initialized successfully');
   } catch (error) {
     console.error('Error initializing database:', error);
     // Don't exit the process, just log the error
   }
 };
 
-// MySQL connection pool with environment variables
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  debug: true
-  // Remove the deprecated options
-});
-
-
-pool.getConnection()
-  .then(conn => {
-    console.log('Database connected successfully');
-    conn.release();
-  })
-  .catch(err => {
-    console.error('Database connection failed:', err);
-    console.log('Connection details:', {
-      host: process.env.DB_HOST,
-      user: process.env.DB_USER,
-      database: process.env.DB_NAME,
-      port: process.env.DB_PORT
-    });
-  });
 // Start the server
 const PORT = process.env.PORT || 5000;
 
-httpServer.listen(PORT, '0.0.0.0', async () => {
-  console.log(`Server is running and accessible on the network at port ${PORT}`);
-  console.log(`API endpoints available at http://localhost:${PORT}/api`);
-  
-  // Initialize database after server starts
-  await initializeDatabase();
-  
-  // Log database connection status
-  pool.getConnection()
-    .then(conn => {
-      console.log('Database connected successfully');
-      conn.release();
-    })
-    .catch(err => {
-      console.error('Database connection failed:', err);
+// Initialize and start server
+const startServer = async () => {
+  try {
+    // Test database connection first
+    const dbConnected = await testDatabaseConnection();
+    
+    if (!dbConnected) {
+      console.log('Warning: Database connection failed, but server will continue running...');
+    }
+    
+    httpServer.listen(PORT, '0.0.0.0', async () => {
+      console.log(`Server is running and accessible on the network at port ${PORT}`);
+      console.log(`API endpoints available at http://localhost:${PORT}/api`);
+      
+      // Initialize database after server starts
+      await initializeDatabase();
     });
-});
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+// Start the server
+startServer();
 
 module.exports = { app, io };
