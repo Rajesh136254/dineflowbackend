@@ -114,11 +114,9 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true,
+  // Fixed SSL configuration for Aiven
   ssl: {
-    rejectUnauthorized: true
+    rejectUnauthorized: false  // Allow self-signed certificates
   }
 });
 
@@ -1329,7 +1327,7 @@ const initializeDatabase = async () => {
     const [tables] = await pool.execute('SHOW TABLES');
     console.log('Existing tables:', tables);
     
-    // Read and execute the SQL file if it exists
+    // Read and execute SQL file if it exists
     const sqlFilePath = path.join(__dirname, 'database.sql');
     if (fs.existsSync(sqlFilePath)) {
       const sqlFile = fs.readFileSync(sqlFilePath, 'utf8');
