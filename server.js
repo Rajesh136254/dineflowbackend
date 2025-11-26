@@ -301,7 +301,7 @@ app.get('/api/tables', async (req, res) => {
       console.warn('Full table query failed, trying fallback:', innerError.message);
       // Fallback query: simple select without joins or is_active check
       const [rows] = await pool.execute(
-        'SELECT *, "Non AC" as group_name FROM restaurant_tables ORDER BY table_number'
+        "SELECT *, 'Non AC' as group_name FROM restaurant_tables ORDER BY table_number"
       );
       console.log(`Found ${rows.length} tables (fallback)`);
       res.json({ success: true, data: rows });
@@ -330,7 +330,7 @@ app.get('/api/tables/:tableNumber', async (req, res) => {
     } catch (innerError) {
       console.warn('Full table query failed, trying fallback:', innerError.message);
       const [rows] = await pool.execute(
-        'SELECT *, "Non AC" as group_name FROM restaurant_tables WHERE table_number = ?',
+        "SELECT *, 'Non AC' as group_name FROM restaurant_tables WHERE table_number = ?",
         [req.params.tableNumber]
       );
       if (rows.length === 0) {
