@@ -656,7 +656,7 @@ app.delete('/api/categories/:name', async (req, res) => {
 // Order endpoints
 app.get('/api/orders', async (req, res) => {
   try {
-    const { status, start_date, end_date } = req.query;
+    const { status, start_date, end_date, table_number, customer_id } = req.query;
 
     // First, get the orders based on filters
     let query = 'SELECT * FROM orders';
@@ -666,6 +666,16 @@ app.get('/api/orders', async (req, res) => {
     if (status) {
       conditions.push('order_status = ?');
       params.push(status);
+    }
+
+    if (table_number) {
+      conditions.push('table_number = ?');
+      params.push(table_number);
+    }
+
+    if (customer_id) {
+      conditions.push('customer_id = ?');
+      params.push(customer_id);
     }
 
     if (start_date) {
@@ -718,7 +728,7 @@ app.post('/api/orders', async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    const { table_number, items, currency, payment_method } = req.body;
+    const { table_number, items, currency, payment_method, customer_id } = req.body;
 
     // Validate input
     if (!table_number || !items || items.length === 0) {
@@ -750,8 +760,8 @@ app.post('/api/orders', async (req, res) => {
     }
 
     const [orderResult] = await connection.execute(
-      'INSERT INTO orders (table_id, table_number, total_amount_inr, total_amount_usd, currency, payment_method, order_status, payment_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [table_id, table_number, total_inr.toFixed(2), total_usd.toFixed(2), currency, payment_method, 'pending', payment_method === 'cash' ? 'pending' : 'paid']
+      'INSERT INTO orders (table_id, table_number, customer_id, total_amount_inr, total_amount_usd, currency, payment_method, order_status, payment_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [table_id, table_number, customer_id || null, total_inr.toFixed(2), total_usd.toFixed(2), currency, payment_method, 'pending', payment_method === 'cash' ? 'pending' : 'paid']
     );
 
     const order_id = orderResult.insertId;
