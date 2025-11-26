@@ -290,12 +290,22 @@ app.delete('/api/menu/:id', async (req, res) => {
 app.get('/api/tables', async (req, res) => {
   try {
     console.log('Fetching tables...');
-    const [rows] = await pool.execute(
-      'SELECT rt.*, COALESCE(tg.name, "Non AC") as group_name FROM restaurant_tables rt LEFT JOIN table_groups tg ON rt.group_id = tg.id WHERE rt.is_active = true ORDER BY rt.table_number'
-    );
-    console.log(`Found ${rows.length} tables`);
-
-    res.json({ success: true, data: rows });
+    try {
+      // Try full query with group_id and is_active
+      const [rows] = await pool.execute(
+        'SELECT rt.*, COALESCE(tg.name, "Non AC") as group_name FROM restaurant_tables rt LEFT JOIN table_groups tg ON rt.group_id = tg.id WHERE rt.is_active = true ORDER BY rt.table_number'
+      );
+      console.log(`Found ${rows.length} tables`);
+      res.json({ success: true, data: rows });
+    } catch (innerError) {
+      console.warn('Full table query failed, trying fallback:', innerError.message);
+      // Fallback query: simple select without joins or is_active check
+      const [rows] = await pool.execute(
+        'SELECT *, "Non AC" as group_name FROM restaurant_tables ORDER BY table_number'
+      );
+      console.log(`Found ${rows.length} tables (fallback)`);
+      res.json({ success: true, data: rows });
+    }
   } catch (error) {
     console.error('Error fetching tables:', error);
     res.status(500).json({
@@ -308,14 +318,26 @@ app.get('/api/tables', async (req, res) => {
 
 app.get('/api/tables/:tableNumber', async (req, res) => {
   try {
-    const [rows] = await pool.execute(
-      'SELECT rt.*, COALESCE(tg.name, "Non AC") as group_name FROM restaurant_tables rt LEFT JOIN table_groups tg ON rt.group_id = tg.id WHERE rt.table_number = ?',
-      [req.params.tableNumber]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Table not found' });
+    try {
+      const [rows] = await pool.execute(
+        'SELECT rt.*, COALESCE(tg.name, "Non AC") as group_name FROM restaurant_tables rt LEFT JOIN table_groups tg ON rt.group_id = tg.id WHERE rt.table_number = ?',
+        [req.params.tableNumber]
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Table not found' });
+      }
+      res.json({ success: true, data: rows[0] });
+    } catch (innerError) {
+      console.warn('Full table query failed, trying fallback:', innerError.message);
+      const [rows] = await pool.execute(
+        'SELECT *, "Non AC" as group_name FROM restaurant_tables WHERE table_number = ?',
+        [req.params.tableNumber]
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Table not found' });
+      }
+      res.json({ success: true, data: rows[0] });
     }
-    res.json({ success: true, data: rows[0] });
   } catch (error) {
     console.error('Error fetching table:', error);
     res.status(500).json({
