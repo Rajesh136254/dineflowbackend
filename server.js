@@ -7,6 +7,7 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
 const fs = require('fs');
 require('dotenv').config();
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 const httpServer = createServer(app);
@@ -143,11 +144,52 @@ const testDatabaseConnection = async () => {
   }
 };
 
+// Update database schema for new features
+const updateDatabaseSchema = async () => {
+  try {
+    const connection = await pool.getConnection();
+
+    // Check for nutritional_info column
+    const [columns] = await connection.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'menu_items' 
+      AND COLUMN_NAME = 'nutritional_info'
+      AND TABLE_SCHEMA = DATABASE()
+    `);
+
+    if (columns.length === 0) {
+      console.log('Adding nutritional_info column to menu_items...');
+      await connection.execute('ALTER TABLE menu_items ADD COLUMN nutritional_info TEXT');
+    }
+
+    // Check for vitamins column
+    const [columnsVitamins] = await connection.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'menu_items' 
+      AND COLUMN_NAME = 'vitamins'
+      AND TABLE_SCHEMA = DATABASE()
+    `);
+
+    if (columnsVitamins.length === 0) {
+      console.log('Adding vitamins column to menu_items...');
+      await connection.execute('ALTER TABLE menu_items ADD COLUMN vitamins TEXT');
+    }
+
+    connection.release();
+    console.log('Schema check completed');
+  } catch (error) {
+    console.error('Schema update failed:', error);
+  }
+};
+
 // Enhanced health check endpoint
 app.get('/api/health', async (req, res) => {
   try {
     // Test database connection
     await pool.execute('SELECT 1');
+    await updateDatabaseSchema(); // Ensure schema is up to date
     res.json({
       status: 'ok',
       message: 'Restaurant QR Ordering System API',
@@ -161,6 +203,53 @@ app.get('/api/health', async (req, res) => {
       message: 'Database connection failed',
       error: error.message,
       timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// AI Nutrition Endpoint
+app.post('/api/ai/nutrition', async (req, res) => {
+  try {
+    const { name, description } = req.body;
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: 'Gemini API key not configured'
+      });
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+    const prompt = `Generate nutritional information for a menu item with Name: '${name}' and Description: '${description}'. 
+    Return ONLY a valid JSON object with exactly two keys: 
+    - nutritional_info: A short string summarizing calories, protein, etc. (e.g., "300 kcal, 10g Protein")
+    - vitamins: A comma-separated string of vitamins (e.g., "Vitamin A, Vitamin C")
+    Do not include any markdown formatting or code blocks. Just the raw JSON string.`;
+
+    console.log(`Generating content for: ${name} using model gemini-2.0-flash`);
+    const result = await model.generateContent(prompt);
+    console.log('Generation complete, getting response text...');
+    const response = await result.response;
+    const text = response.text();
+    console.log('AI Response:', text);
+
+    // Clean up the text if it contains markdown code blocks
+    const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+    const data = JSON.parse(cleanText);
+
+    res.json({
+      success: true,
+      data: data
+    });
+  } catch (error) {
+    console.error('AI Generation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate nutritional info',
+      error: error.message
     });
   }
 });
@@ -207,10 +296,10 @@ app.get('/api/menu/:id', async (req, res) => {
 
 app.post('/api/menu', async (req, res) => {
   try {
-    const { name, description, price_inr, price_usd, category, image_url, is_available } = req.body;
+    const { name, description, price_inr, price_usd, category, image_url, is_available, nutritional_info, vitamins } = req.body;
     const [result] = await pool.execute(
-      'INSERT INTO menu_items (name, description, price_inr, price_usd, category, image_url, is_available) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, description, price_inr, price_usd, category, image_url || null, is_available !== false]
+      'INSERT INTO menu_items (name, description, price_inr, price_usd, category, image_url, is_available, nutritional_info, vitamins) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, description, price_inr, price_usd, category, image_url || null, is_available !== false, nutritional_info || null, vitamins || null]
     );
 
     const [newItem] = await pool.execute('SELECT * FROM menu_items WHERE id = ?', [result.insertId]);
@@ -227,10 +316,10 @@ app.post('/api/menu', async (req, res) => {
 
 app.put('/api/menu/:id', async (req, res) => {
   try {
-    const { name, description, price_inr, price_usd, category, image_url, is_available } = req.body;
+    const { name, description, price_inr, price_usd, category, image_url, is_available, nutritional_info, vitamins } = req.body;
     const [result] = await pool.execute(
-      'UPDATE menu_items SET name = ?, description = ?, price_inr = ?, price_usd = ?, category = ?, image_url = ?, is_available = ? WHERE id = ?',
-      [name, description, price_inr, price_usd, category, image_url, is_available, req.params.id]
+      'UPDATE menu_items SET name = ?, description = ?, price_inr = ?, price_usd = ?, category = ?, image_url = ?, is_available = ?, nutritional_info = ?, vitamins = ? WHERE id = ?',
+      [name, description, price_inr, price_usd, category, image_url, is_available, nutritional_info || null, vitamins || null, req.params.id]
     );
 
     if (result.affectedRows === 0) {
@@ -2168,6 +2257,159 @@ const initializeDatabase = async () => {
     console.error('Error initializing database:', error);
   }
 };
+
+// Ingredients Endpoints
+app.get('/api/ingredients', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(`
+      SELECT *, 
+      current_stock as quantity, 
+      min_stock_level as threshold 
+      FROM ingredients 
+      ORDER BY name
+    `);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error fetching ingredients:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch ingredients', error: error.message });
+  }
+});
+
+app.post('/api/ingredients', async (req, res) => {
+  try {
+    const { name, quantity, unit, threshold, current_stock, min_stock_level, cost_per_unit } = req.body;
+
+    // Validation
+    if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
+    if (!unit) return res.status(400).json({ success: false, message: 'Unit is required' });
+
+    // Handle both naming conventions, default to 0 if undefined
+    const stock = quantity !== undefined ? quantity : (current_stock !== undefined ? current_stock : 0);
+    const minStock = threshold !== undefined ? threshold : (min_stock_level !== undefined ? min_stock_level : 0);
+    const cost = cost_per_unit !== undefined ? cost_per_unit : 0.00;
+
+    const [result] = await pool.execute(
+      'INSERT INTO ingredients (name, current_stock, unit, min_stock_level, cost_per_unit) VALUES (?, ?, ?, ?, ?)',
+      [name, stock, unit, minStock, cost]
+    );
+
+    const [newIngredient] = await pool.execute(`
+      SELECT *, 
+      current_stock as quantity, 
+      min_stock_level as threshold 
+      FROM ingredients WHERE id = ?
+    `, [result.insertId]);
+
+    res.json({ success: true, data: newIngredient[0] });
+  } catch (error) {
+    console.error('Error creating ingredient:', error);
+    res.status(500).json({ success: false, message: 'Failed to create ingredient', error: error.message });
+  }
+});
+
+app.put('/api/ingredients/:id', async (req, res) => {
+  try {
+    const { name, quantity, unit, threshold, current_stock, min_stock_level, cost_per_unit } = req.body;
+
+    // Validation
+    if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
+    if (!unit) return res.status(400).json({ success: false, message: 'Unit is required' });
+
+    const stock = quantity !== undefined ? quantity : (current_stock !== undefined ? current_stock : 0);
+    const minStock = threshold !== undefined ? threshold : (min_stock_level !== undefined ? min_stock_level : 0);
+    const cost = cost_per_unit !== undefined ? cost_per_unit : 0.00;
+
+    await pool.execute(
+      'UPDATE ingredients SET name = ?, current_stock = ?, unit = ?, min_stock_level = ?, cost_per_unit = ? WHERE id = ?',
+      [name, stock, unit, minStock, cost, req.params.id]
+    );
+
+    const [updatedIngredient] = await pool.execute(`
+      SELECT *, 
+      current_stock as quantity, 
+      min_stock_level as threshold 
+      FROM ingredients WHERE id = ?
+    `, [req.params.id]);
+
+    res.json({ success: true, data: updatedIngredient[0] });
+  } catch (error) {
+    console.error('Error updating ingredient:', error);
+    res.status(500).json({ success: false, message: 'Failed to update ingredient', error: error.message });
+  }
+});
+
+app.delete('/api/ingredients/:id', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Delete related records first to satisfy foreign key constraints
+    await connection.execute('DELETE FROM recipe_items WHERE ingredient_id = ?', [req.params.id]);
+    await connection.execute('DELETE FROM waste_log WHERE ingredient_id = ?', [req.params.id]);
+
+    // Now delete the ingredient
+    await connection.execute('DELETE FROM ingredients WHERE id = ?', [req.params.id]);
+
+    await connection.commit();
+    res.json({ success: true, message: 'Ingredient deleted successfully' });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error deleting ingredient:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete ingredient', error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// Feedback Endpoint
+app.post('/api/feedback', async (req, res) => {
+  try {
+    const { order_id, customer_id, rating, comments } = req.body;
+    await pool.execute(
+      'INSERT INTO order_feedback (order_id, customer_id, rating, comments) VALUES (?, ?, ?, ?)',
+      [order_id, customer_id, rating, comments]
+    );
+    res.json({ success: true, message: 'Feedback submitted successfully' });
+  } catch (error) {
+    console.error('Error submitting feedback:', error);
+    res.status(500).json({ success: false, message: 'Failed to submit feedback', error: error.message });
+  }
+});
+
+// Cancellation Endpoints
+app.post('/api/orders/:id/cancel', async (req, res) => {
+  try {
+    const { reason, cancelled_by } = req.body;
+    // Update order status
+    await pool.execute('UPDATE orders SET order_status = "cancelled" WHERE id = ?', [req.params.id]);
+    // Log cancellation
+    await pool.execute(
+      'INSERT INTO order_cancellations (order_id, reason, cancelled_by) VALUES (?, ?, ?)',
+      [req.params.id, reason, cancelled_by]
+    );
+    res.json({ success: true, message: 'Order cancelled successfully' });
+  } catch (error) {
+    console.error('Error cancelling order:', error);
+    res.status(500).json({ success: false, message: 'Failed to cancel order', error: error.message });
+  }
+});
+
+app.post('/api/orders/:id/items/:itemId/cancel', async (req, res) => {
+  try {
+    const { reason, cancelled_by } = req.body;
+    // Update item status
+    await pool.execute('UPDATE order_items SET item_status = "cancelled" WHERE id = ? AND order_id = ?', [req.params.itemId, req.params.id]);
+    // Log cancellation
+    await pool.execute(
+      'INSERT INTO order_cancellations (order_id, item_id, reason, cancelled_by) VALUES (?, ?, ?, ?)',
+      [req.params.id, req.params.itemId, reason, cancelled_by]
+    );
+    res.json({ success: true, message: 'Item cancelled successfully' });
+  } catch (error) {
+    console.error('Error cancelling item:', error);
+    res.status(500).json({ success: false, message: 'Failed to cancel item', error: error.message });
+  }
+});
 
 // Start the server
 const PORT = process.env.PORT || 5000;

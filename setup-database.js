@@ -49,21 +49,6 @@ async function setupDatabase() {
     await dbConnection.query(`
       CREATE TABLE IF NOT EXISTS menu_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(200) NOT NULL,
-        description TEXT,
-        price_inr DECIMAL(10, 2) NOT NULL,
-        price_usd DECIMAL(10, 2) NOT NULL,
-        category VARCHAR(100),
-        image_url TEXT,
-        is_available BOOLEAN DEFAULT true,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      )
-    `);
-
-    await dbConnection.query(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id INT AUTO_INCREMENT PRIMARY KEY,
         table_id INT,
         table_number INT NOT NULL,
         total_amount_inr DECIMAL(10, 2) NOT NULL,
