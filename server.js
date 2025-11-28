@@ -21,7 +21,8 @@ const allowedOrigins = [
   'http://localhost:3002',
   'http://127.0.0.1:3002',
   'https://dineflowfrontend.vercel.app',
-  'https://dineflowbackend.onrender.com'
+  'https://dineflowbackend.onrender.com',
+  'https://dineflowfrontend-6wmy.vercel.app'
 ];
 
 // Socket.IO CORS configuration
