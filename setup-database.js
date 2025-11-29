@@ -88,46 +88,6 @@ async function setupDatabase() {
       )
     `);
 
-    // Insert default tables (10 tables)
-    const tables = [
-      [1, 'Table 1', 'table-1'],
-      [2, 'Table 2', 'table-2'],
-      [3, 'Table 3', 'table-3'],
-      [4, 'Table 4', 'table-4'],
-      [5, 'Table 5', 'table-5'],
-      [6, 'Table 6', 'table-6'],
-      [7, 'Table 7', 'table-7'],
-      [8, 'Table 8', 'table-8'],
-      [9, 'Table 9', 'table-9'],
-      [10, 'Table 10', 'table-10']
-    ];
-
-    for (const table of tables) {
-      await dbConnection.query(
-        'INSERT IGNORE INTO restaurant_tables (table_number, table_name, qr_code_data) VALUES (?, ?, ?)',
-        table
-      );
-    }
-
-    // Insert sample menu items
-    const menuItems = [
-      ['Margherita Pizza', 'Classic pizza with tomato, mozzarella, and basil', 299.00, 3.99, 'Main Course', true],
-      ['Chicken Biryani', 'Aromatic rice dish with spiced chicken', 349.00, 4.49, 'Main Course', true],
-      ['Paneer Tikka', 'Grilled cottage cheese with Indian spices', 249.00, 3.29, 'Appetizer', true],
-      ['Caesar Salad', 'Fresh romaine lettuce with Caesar dressing', 199.00, 2.69, 'Salad', true],
-      ['Masala Dosa', 'Crispy rice crepe with potato filling', 149.00, 1.99, 'Main Course', true],
-      ['Chocolate Brownie', 'Rich chocolate dessert with ice cream', 179.00, 2.39, 'Dessert', true],
-      ['Mango Lassi', 'Traditional yogurt-based mango drink', 89.00, 1.19, 'Beverage', true],
-      ['Coffee', 'Freshly brewed coffee', 79.00, 1.09, 'Beverage', true]
-    ];
-
-    for (const item of menuItems) {
-      await dbConnection.query(
-        'INSERT IGNORE INTO menu_items (name, description, price_inr, price_usd, category, is_available) VALUES (?, ?, ?, ?, ?, ?)',
-        item
-      );
-    }
-
     console.log('Database setup completed successfully');
     await dbConnection.end();
   } catch (error) {
